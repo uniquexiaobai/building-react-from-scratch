@@ -85,16 +85,29 @@ function updateDom(dom, prevProps, nextProps) {
 		});
 }
 
+function commentDeletion(fiber, domParent) {
+	if (fiber.dom) {
+		domParent.removeChild(fiber.dom);
+	} else {
+		commitDeletion(fiber.child, domParent);
+	}
+}
+
 function commitWork(fiber) {
 	if (!fiber) return;
 
-	const domParent = fiber.parent.dom;
+	let domParentFiber = fiber.parent;
+	while (!domParentFiber.dom) {
+		domParentFiber = domParentFiber.parent;
+	}
+	const domParent = domParentFiber.dom;
+
 	if (fiber.effectTag === 'PLACEMENT' && fiber.dom != null) {
 		domParent.appendChild(fiber.dom);
 	} else if (fiber.effectTag === 'UPDATE' && fiber.dom != null) {
 		updateDom(fiber.dom, fiber.alternate.props, fiber.props);
 	} else if (fiber.effectTag === 'DELETION') {
-		domParent.removeChild(fiber.dom);
+		commentDeletion(fiber, domParent);
 	}
 
 	commitWork(fiber.child);
@@ -102,6 +115,8 @@ function commitWork(fiber) {
 }
 
 function render(element, container) {
+	console.log(element, element.type(element.props));
+
 	wipRoot = {
 		dom: container,
 		props: {
@@ -136,12 +151,15 @@ function workLoop(deadline) {
 }
 
 function performUnitOfWork(fiber) {
-	if (!fiber.dom) {
-		fiber.dom = createDom(fiber);
-	}
+	const isFunctionComponent = typeof fiber.type === 'function';
 
-	const elements = fiber.props.children;
-	reconcileChildren(fiber, elements);
+	console.log('###', fiber);
+
+	if (isFunctionComponent) {
+		updateFunctionComponent(fiber);
+	} else {
+		updateHostComponent(fiber);
+	}
 
 	if (fiber.child) {
 		return fiber.child;
@@ -154,6 +172,19 @@ function performUnitOfWork(fiber) {
 		}
 		nextFiber = nextFiber.parent;
 	}
+}
+
+function updateFunctionComponent(fiber) {
+	const children = [fiber.type(fiber.props)];
+	reconcileChildren(fiber, children);
+	console.log('updateFunctionComponent', fiber);
+}
+
+function updateHostComponent(fiber) {
+	if (!fiber.dom) {
+		fiber.dom = createDom(fiber);
+	}
+	reconcileChildren(fiber, fiber.props.children);
 }
 
 function reconcileChildren(wipFiber, elements) {
@@ -209,13 +240,19 @@ const Rat = {
 };
 
 // /** @jsx Rat.createElement */
-const element = (
-	<div id='foo'>
-		<h1>hello</h1>
-		123
-		<a href='baidu.com'>baidu</a>
-	</div>
-);
+// const element = (
+// 	<div id='foo'>
+// 		<h1>hello</h1>
+// 		123
+// 		<a href='baidu.com'>baidu</a>
+// 	</div>
+// );
+
+function App(props) {
+	return <h1>Hi {props.name}</h1>;
+}
+
+const element = <App name='foo' />;
 
 const container = document.getElementById('root');
 Rat.render(element, container);
