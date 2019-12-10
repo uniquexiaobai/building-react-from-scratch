@@ -26,22 +26,9 @@ function createDom(fiber) {
 			? document.createTextNode('')
 			: document.createElement(fiber.type);
 
-	const isProperty = key => key !== 'children';
-
-	Object.keys(fiber.props)
-		.filter(isProperty)
-		.forEach(name => {
-			dom[name] = fiber.props[name];
-		});
+	updateDom(dom, {}, fiber.props);
 
 	return dom;
-}
-
-function commitRoot() {
-	deletions.forEach(commitWork);
-	commitWork(wipRoot.child);
-	currentRoot = wipRoot;
-	wipRoot = null;
 }
 
 const isEvent = key => key.startsWith('on');
@@ -53,9 +40,9 @@ function updateDom(dom, prevProps, nextProps) {
 	// remove old or changed event listeners
 	Object.keys(prevProps)
 		.filter(isEvent)
-		.filter(key => !(key in nextProps) || isNew(prevProps, nextProps(key)))
+		.filter(key => !(key in nextProps) || isNew(prevProps, nextProps)(key))
 		.forEach(name => {
-			const eventType = name.toLowerCase.slice(2);
+			const eventType = name.toLowerCase().slice(2);
 			dom.removeEventListener(eventType, prevProps[name]);
 		});
 
@@ -68,7 +55,7 @@ function updateDom(dom, prevProps, nextProps) {
 		});
 
 	// set new or changed props
-	Object.keys(prevProps)
+	Object.keys(nextProps)
 		.filter(isProperty)
 		.filter(isNew(prevProps, nextProps))
 		.forEach(name => {
@@ -85,12 +72,11 @@ function updateDom(dom, prevProps, nextProps) {
 		});
 }
 
-function commentDeletion(fiber, domParent) {
-	if (fiber.dom) {
-		domParent.removeChild(fiber.dom);
-	} else {
-		commitDeletion(fiber.child, domParent);
-	}
+function commitRoot() {
+	deletions.forEach(commitWork);
+	commitWork(wipRoot.child);
+	currentRoot = wipRoot;
+	wipRoot = null;
 }
 
 function commitWork(fiber) {
@@ -107,16 +93,22 @@ function commitWork(fiber) {
 	} else if (fiber.effectTag === 'UPDATE' && fiber.dom != null) {
 		updateDom(fiber.dom, fiber.alternate.props, fiber.props);
 	} else if (fiber.effectTag === 'DELETION') {
-		commentDeletion(fiber, domParent);
+		commitDeletion(fiber, domParent);
 	}
 
 	commitWork(fiber.child);
 	commitWork(fiber.sibling);
 }
 
-function render(element, container) {
-	console.log(element, element.type(element.props));
+function commitDeletion(fiber, domParent) {
+	if (fiber.dom) {
+		domParent.removeChild(fiber.dom);
+	} else {
+		commitDeletion(fiber.child, domParent);
+	}
+}
 
+function render(element, container) {
 	wipRoot = {
 		dom: container,
 		props: {
@@ -132,6 +124,8 @@ let nextUnitOfWork = null;
 let currentRoot = null;
 let wipRoot = null;
 let deletions = null;
+let wipFiber = null;
+let hookIndex = null;
 
 requestIdleCallback(workLoop);
 
@@ -153,8 +147,6 @@ function workLoop(deadline) {
 function performUnitOfWork(fiber) {
 	const isFunctionComponent = typeof fiber.type === 'function';
 
-	console.log('###', fiber);
-
 	if (isFunctionComponent) {
 		updateFunctionComponent(fiber);
 	} else {
@@ -175,9 +167,12 @@ function performUnitOfWork(fiber) {
 }
 
 function updateFunctionComponent(fiber) {
+	wipFiber = fiber;
+	wipFiber.hooks = [];
+	hookIndex = 0;
+
 	const children = [fiber.type(fiber.props)];
 	reconcileChildren(fiber, children);
-	console.log('updateFunctionComponent', fiber);
 }
 
 function updateHostComponent(fiber) {
@@ -223,9 +218,13 @@ function reconcileChildren(wipFiber, elements) {
 			deletions.push(oldFiber);
 		}
 
+		if (oldFiber) {
+			oldFiber = oldFiber.sibling;
+		}
+
 		if (index === 0) {
 			wipFiber.child = newFiber;
-		} else {
+		} else if (element) {
 			prevSibling.sibling = newFiber;
 		}
 
@@ -234,25 +233,56 @@ function reconcileChildren(wipFiber, elements) {
 	}
 }
 
+function useState(initialState) {
+	const oldHook =
+		wipFiber.alternate && wipFiber.alternate.hooks && wipFiber.alternate.hooks[hookIndex];
+	const hook = {
+		state: oldHook ? oldHook.state : initialState,
+		queue: [],
+	};
+
+	const actions = oldHook ? oldHook.queue : [];
+	actions.forEach(action => {
+		hook.state = action(hook.state);
+	});
+
+	const setState = action => {
+		hook.queue.push(action);
+		wipRoot = {
+			dom: currentRoot.dom,
+			props: currentRoot.props,
+			alternate: currentRoot,
+		};
+		nextUnitOfWork = wipRoot;
+		deletions = [];
+	};
+
+	wipFiber.hooks.push(hook);
+	hookIndex++;
+	return [hook.state, setState];
+}
+
 const Rat = {
 	createElement,
 	render,
+	useState,
 };
 
-// /** @jsx Rat.createElement */
-// const element = (
-// 	<div id='foo'>
-// 		<h1>hello</h1>
-// 		123
-// 		<a href='baidu.com'>baidu</a>
-// 	</div>
-// );
+function Counter() {
+	const [count, setCount] = Rat.useState(1);
 
-function App(props) {
-	return <h1>Hi {props.name}</h1>;
+	const inc = () => {
+		setCount(c => c + 1);
+	};
+
+	return (
+		<h1 onClick={inc} style='user-select: none'>
+			{count}
+		</h1>
+	);
 }
 
-const element = <App name='foo' />;
+const element = <Counter />;
 
 const container = document.getElementById('root');
 Rat.render(element, container);
